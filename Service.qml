@@ -16,9 +16,20 @@ QtObject {
   id: root
 
   readonly property string home: Quickshell.env("HOME")
-  readonly property string pluginDir: home + "/.config/omarchy/plugins/hass"
+  readonly property string pluginDir: {
+    var url = String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/+$/, "")
+    return url || (home + "/.config/omarchy/plugins/hass")
+  }
   readonly property string configDir: home + "/.config/omarchy/hass"
   readonly property string configPath: configDir + "/config.json"
+
+  property var rawConfig: ({})
+  property var endpoints: ({})
+  property string activeEndpointId: "default"
+  property string activeEndpointName: "Home"
+  property string activeEndpointIcon: "home"
+  property var endpointList: []
+  property var endpointStatesCache: ({})
 
   // idle | connecting | connected | error
   property string phase: "idle"
@@ -108,7 +119,14 @@ QtObject {
   }
 
   function currentConfig() {
-    return {
+    var cleanEndpoints = {}
+    for (var eid in root.endpoints) {
+      cleanEndpoints[eid] = root.endpoints[eid]
+    }
+    cleanEndpoints[root.activeEndpointId] = {
+      id: root.activeEndpointId,
+      name: root.activeEndpointName,
+      icon: root.activeEndpointIcon,
       baseUrl: root.baseUrl,
       localUrl: root.localUrl,
       trustedNetwork: root.trustedNetwork,
@@ -127,6 +145,10 @@ QtObject {
       selectedTab: root.activeTab,
       displayNameOverrides: root.displayNameOverrides,
       iconOverrides: root.iconOverrides
+    }
+    return {
+      activeEndpointId: root.activeEndpointId,
+      endpoints: cleanEndpoints
     }
   }
 
@@ -405,29 +427,134 @@ QtObject {
     var config = parsed.config
     if (parsed.error) root.lastError = parsed.error
 
-    root.demoMode = config.demoMode
-    root.baseUrl = config.baseUrl
-    root.localUrl = config.localUrl
-    root.trustedNetwork = config.trustedNetwork
-    root.liveFavorites = config.favorites
-    root.demoFavorites = config.demoFavorites
-    root.liveRoomReadings = config.roomReadings
-    root.demoRoomReadings = config.demoRoomReadings
-    root.livePinnedRoomReadings = config.pinnedRoomReadings
-    root.demoPinnedRoomReadings = config.demoPinnedRoomReadings
-    root.livePanelOrder = config.panelOrder
-    root.demoPanelOrder = config.demoPanelOrder
-    root.displayNameOverrides = config.displayNameOverrides
-    root.iconOverrides = config.iconOverrides
-    root.groupByArea = config.groupByArea
-    root.showEntityIcons = config.showEntityIcons
-    root.showPanelPinOnHover = config.showPanelPinOnHover
-    root.activeTab = config.selectedTab
+    root.rawConfig = config
+    root.endpoints = config.endpoints || {}
+    root.activeEndpointId = config.activeEndpointId || Object.keys(config.endpoints)[0] || "default"
+
+    var list = []
+    for (var eid in config.endpoints) {
+      var ep = config.endpoints[eid]
+      list.push({ id: ep.id, name: ep.name, icon: ep.icon })
+    }
+    root.endpointList = list
+
+    var active = config.endpoints[root.activeEndpointId] || ConfigStore.activeEndpoint(config)
+    if (active) {
+      root.activeEndpointName = active.name
+      root.activeEndpointIcon = active.icon
+      root.demoMode = active.demoMode
+      root.baseUrl = active.baseUrl
+      root.localUrl = active.localUrl
+      root.trustedNetwork = active.trustedNetwork
+      root.liveFavorites = active.favorites
+      root.demoFavorites = active.demoFavorites
+      root.liveRoomReadings = active.roomReadings
+      root.demoRoomReadings = active.demoRoomReadings
+      root.livePinnedRoomReadings = active.pinnedRoomReadings
+      root.demoPinnedRoomReadings = active.demoPinnedRoomReadings
+      root.livePanelOrder = active.panelOrder
+      root.demoPanelOrder = active.demoPanelOrder
+      root.displayNameOverrides = active.displayNameOverrides
+      root.iconOverrides = active.iconOverrides
+      root.groupByArea = active.groupByArea
+      root.showEntityIcons = active.showEntityIcons
+      root.showPanelPinOnHover = active.showPanelPinOnHover
+      root.activeTab = active.selectedTab
+    }
 
     root.configured = root.demoMode || root.baseUrl.length > 0
     rebuildSortedIds()
     rebuildRows()
     root.reconcileConnection()
+  }
+
+  function switchEndpoint(endpointId) {
+    if (!endpointId || endpointId === root.activeEndpointId || !root.endpoints[endpointId]) return
+    if (root.activeEndpointId) {
+      root.endpointStatesCache[root.activeEndpointId] = {
+        states: root.states,
+        areaNames: root.areaNames,
+        entityArea: root.entityArea,
+        deviceNames: root.deviceNames,
+        deviceInfo: root.deviceInfo,
+        deviceArea: root.deviceArea,
+        deviceEntities: root.deviceEntities,
+        entityRegistry: root.entityRegistry,
+        temperatureUnit: root.temperatureUnit
+      }
+    }
+    if (root.endpointStatesCache[endpointId]) {
+      var cached = root.endpointStatesCache[endpointId]
+      root.states = cached.states || ({})
+      root.areaNames = cached.areaNames || Object.create(null)
+      root.entityArea = cached.entityArea || Object.create(null)
+      root.deviceNames = cached.deviceNames || Object.create(null)
+      root.deviceInfo = cached.deviceInfo || Object.create(null)
+      root.deviceArea = cached.deviceArea || Object.create(null)
+      root.deviceEntities = cached.deviceEntities || Object.create(null)
+      root.entityRegistry = cached.entityRegistry || Object.create(null)
+      root.temperatureUnit = cached.temperatureUnit || ""
+      root.stateRevision++
+    }
+    root.saveConfig({ activeEndpointId: endpointId })
+  }
+
+  function addEndpoint(id, name, icon) {
+    var newId = id || ("house_" + Date.now().toString(36))
+    var newEp = {
+      id: newId,
+      name: name || "New House",
+      icon: icon || "home",
+      baseUrl: "",
+      localUrl: "",
+      trustedNetwork: "",
+      demoMode: false,
+      favorites: [],
+      demoFavorites: [],
+      roomReadings: [],
+      demoRoomReadings: [],
+      pinnedRoomReadings: [],
+      demoPinnedRoomReadings: [],
+      panelOrder: [],
+      demoPanelOrder: [],
+      groupByArea: false,
+      showEntityIcons: true,
+      showPanelPinOnHover: false,
+      selectedTab: "favorites",
+      displayNameOverrides: {},
+      iconOverrides: {}
+    }
+    var epPatch = {}
+    epPatch[newEp.id] = newEp
+    root.saveConfig({
+      activeEndpointId: newEp.id,
+      endpoints: epPatch
+    })
+  }
+
+  function deleteEndpoint(endpointId) {
+    if (!endpointId || Object.keys(root.endpoints).length <= 1) return
+    var epPatch = {}
+    epPatch[endpointId] = null
+    var nextActive = root.activeEndpointId
+    if (endpointId === root.activeEndpointId) {
+      for (var k in root.endpoints) {
+        if (k !== endpointId) { nextActive = k; break }
+      }
+    }
+    root.saveConfig({
+      activeEndpointId: nextActive,
+      endpoints: epPatch
+    })
+  }
+
+  function renameEndpoint(endpointId, newName) {
+    if (!root.endpoints[endpointId] || !newName) return
+    var epPatch = {}
+    epPatch[endpointId] = { name: newName }
+    root.saveConfig({
+      endpoints: epPatch
+    })
   }
 
   // Which connection the bridge is running for. Config is saved on every

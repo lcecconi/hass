@@ -16,6 +16,9 @@ Panel {
   // alongside the base open/close/toggle.
   manageIpc: false
 
+  property var settings: ({})
+  readonly property string configuredEndpointId: settings && settings.endpoint ? String(settings.endpoint).trim() : ""
+
   readonly property var hass: bar && bar.shell ? bar.shell.serviceFor("hass") : null
   readonly property bool serviceReady: hass !== null
   readonly property string phase: serviceReady ? hass.phase : "idle"
@@ -35,7 +38,22 @@ Panel {
   readonly property bool hasDevices: serviceReady && hass.hasDevices
   readonly property var tabs: serviceReady ? hass.tabs : []
 
-  onOpenedChanged: if (!opened) {
+  function cycleEndpoint() {
+    if (!root.serviceReady || !root.hass.endpointList || root.hass.endpointList.length <= 1) return
+    var list = root.hass.endpointList
+    var currentIdx = 0
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === root.hass.activeEndpointId) { currentIdx = i; break }
+    }
+    var nextIdx = (currentIdx + 1) % list.length
+    root.hass.switchEndpoint(list[nextIdx].id)
+  }
+
+  onOpenedChanged: if (opened) {
+    if (configuredEndpointId && root.serviceReady && root.hass.endpoints[configuredEndpointId] && configuredEndpointId !== root.hass.activeEndpointId) {
+      root.hass.switchEndpoint(configuredEndpointId)
+    }
+  } else {
     expandedEntityId = ""
     collapsedPinnedRows = []
     cursorActive = false
@@ -211,10 +229,30 @@ Panel {
       if (!root.serviceReady) return "service: UNREACHABLE"
       return "phase=" + root.hass.phase
         + " configured=" + root.hass.configured
+        + " endpoint=" + root.hass.activeEndpointId
+        + " (" + root.hass.activeEndpointName + ")"
         + " demo=" + root.hass.demoMode
         + " entities=" + Object.keys(root.hass.states).length
         + " rows=" + root.hass.rows.count
         + (root.hass.lastError ? " error=" + root.hass.lastError : "")
+    }
+
+    function switchEndpoint(endpointId: string): string {
+      if (!root.serviceReady) return "service unavailable"
+      if (!root.hass.endpoints[endpointId]) return "unknown endpoint " + endpointId
+      root.hass.switchEndpoint(endpointId)
+      return "switched to " + endpointId
+    }
+
+    function listEndpoints(): string {
+      if (!root.serviceReady) return "service unavailable"
+      var out = []
+      for (var id in root.hass.endpoints) {
+        var ep = root.hass.endpoints[id]
+        var prefix = id === root.hass.activeEndpointId ? "* " : "  "
+        out.push(prefix + id + " (" + ep.name + ") - " + (ep.baseUrl || (ep.demoMode ? "demo" : "unconfigured")))
+      }
+      return out.join("\n")
     }
 
     function refresh(): void {
@@ -281,6 +319,7 @@ Panel {
     bar: root.bar
     text: root.icon
     foreground: root.iconColor
+    tooltipText: root.serviceReady && root.hass.activeEndpointName ? root.hass.activeEndpointName : "Home Assistant"
     // `active` paints with the bar's urgent colour.
     active: root.phase === "error"
     onPressed: root.toggle()
@@ -325,7 +364,7 @@ Panel {
         // ---------- hero: mark · title · status ----------
         PanelHero {
           width: parent.width
-          title: "Home Assistant"
+          title: root.serviceReady && root.hass.activeEndpointName ? root.hass.activeEndpointName : "Home Assistant"
           meta: root.heroMeta
           foreground: root.fg
           fontFamily: root.family
@@ -340,12 +379,25 @@ Panel {
           }
 
           trailingControl: Component {
-            PanelActionButton {
-              iconText: "󰒓"                  // md-cog
-              tooltipText: "Settings"
-              foreground: Qt.darker(root.fg, 1.4)
-              fontFamily: root.family
-              onClicked: root.openSettings("connection")
+            Row {
+              spacing: Style.space(6)
+
+              PanelActionButton {
+                visible: root.serviceReady && root.hass.endpointList && root.hass.endpointList.length > 1 && !root.configuredEndpointId
+                iconText: "󱞔"                  // md-home_switch
+                tooltipText: "Switch house (" + (root.hass ? root.hass.activeEndpointName : "") + ")"
+                foreground: Qt.darker(root.fg, 1.4)
+                fontFamily: root.family
+                onClicked: root.cycleEndpoint()
+              }
+
+              PanelActionButton {
+                iconText: "󰒓"                  // md-cog
+                tooltipText: "Settings"
+                foreground: Qt.darker(root.fg, 1.4)
+                fontFamily: root.family
+                onClicked: root.openSettings("connection")
+              }
             }
           }
         }

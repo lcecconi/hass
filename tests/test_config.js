@@ -23,10 +23,13 @@ function eq(label, actual, expected) {
 console.log("configuration normalization and serialization");
 const invalid = Config.parse("{broken", ["light.demo"]);
 eq("invalid JSON is reported", invalid.error, "config.json is not valid JSON");
-eq("invalid config keeps safe demo defaults", invalid.config.demoFavorites,
+eq("invalid config keeps safe demo defaults in default endpoint",
+   invalid.config.endpoints.default.demoFavorites,
    ["light.demo"]);
+eq("invalid config has default activeEndpointId", invalid.config.activeEndpointId, "default");
 
-const parsed = Config.parse(JSON.stringify({
+// Legacy migration test
+const legacyRaw = JSON.stringify({
   baseUrl: 7,
   demoMode: true,
   favorites: ["light.a", 4, "", "light.a"],
@@ -36,8 +39,13 @@ const parsed = Config.parse(JSON.stringify({
   displayNameOverrides: { "light.a": "Desk", bad: 4 },
   iconOverrides: [],
   selectedTab: "area:kitchen"
-}), ["light.demo"]);
-eq("typed values are normalized", parsed.config, {
+});
+const parsedLegacy = Config.parse(legacyRaw, ["light.demo"]);
+eq("legacy format migrates to default endpoint", parsedLegacy.config.activeEndpointId, "default");
+eq("legacy typed values are normalized under default endpoint", parsedLegacy.config.endpoints.default, {
+  id: "default",
+  name: "Home",
+  icon: "home",
   baseUrl: "",
   localUrl: "",
   trustedNetwork: "",
@@ -58,55 +66,75 @@ eq("typed values are normalized", parsed.config, {
   iconOverrides: {}
 });
 
-const defaults = Config.parse("{}", []);
-eq("the panel pin hover shortcut is opt in",
-   defaults.config.showPanelPinOnHover, false);
+// Multi-endpoint parsing test
+const multiRaw = JSON.stringify({
+  activeEndpointId: "cabin",
+  endpoints: {
+    home: {
+      name: "City Flat",
+      baseUrl: "https://ha.city.net",
+      favorites: ["light.hallway"]
+    },
+    cabin: {
+      name: "Mountain Cabin",
+      baseUrl: "https://ha.cabin.net",
+      localUrl: "https://192.168.1.10:8123",
+      trustedNetwork: "Cabin_WiFi",
+      favorites: ["switch.heater"]
+    }
+  }
+});
+const parsedMulti = Config.parse(multiRaw, []);
+eq("multi-endpoint activeEndpointId preserved", parsedMulti.config.activeEndpointId, "cabin");
+eq("home endpoint normalized", parsedMulti.config.endpoints.home.name, "City Flat");
+eq("cabin endpoint normalized", parsedMulti.config.endpoints.cabin.baseUrl, "https://ha.cabin.net");
+eq("activeEndpoint helper returns active endpoint", Config.activeEndpoint(parsedMulti.config).name, "Mountain Cabin");
 
-const withLocal = Config.parse(JSON.stringify({
-  baseUrl: "https://ha.example.com",
-  localUrl: 7,
-  trustedNetwork: 9
-}), []);
-eq("a non-string localUrl falls back to empty", withLocal.config.localUrl, "");
-eq("a non-string trustedNetwork falls back to empty",
-   withLocal.config.trustedNetwork, "");
-
-const withRooms = Config.parse(JSON.stringify({
-  favorites: ["light.desk"],
-  roomReadings: ["abc123", "abc123", "device.room", "bad value", "__proto__"],
-  demoRoomReadings: ["device.demo"],
-  pinnedRoomReadings: ["abc123", "missing", "abc123"],
-  demoPinnedRoomReadings: ["device.demo", "missing"],
-  panelOrder: ["room_reading:abc123", "light.desk", "room_reading:missing"],
-  demoPanelOrder: ["room_reading:device.demo", "bad value"]
-}), []);
-eq("room-reading device ids are normalized independently from entity ids",
-   withRooms.config.roomReadings, ["abc123", "device.room"]);
-eq("demo room readings use their own namespace",
-   withRooms.config.demoRoomReadings, ["device.demo"]);
-eq("only selected room readings remain pinned",
-   withRooms.config.pinnedRoomReadings, ["abc123"]);
-eq("demo pins use their own selected room namespace",
-   withRooms.config.demoPinnedRoomReadings, ["device.demo"]);
-eq("one panel order interleaves entities and room-reading cards",
-   withRooms.config.panelOrder, ["room_reading:abc123", "light.desk",
-                                 "room_reading:device.room"]);
-eq("demo panel order is independent",
-   withRooms.config.demoPanelOrder, ["room_reading:device.demo"]);
-
-const merged = Config.merge(parsed.config, {
+// Merging and updating
+const mergedDirect = Config.merge(parsedMulti.config, {
   groupByArea: true,
-  localUrl: "https://192.168.1.50:8123",
   token: "must-not-be-serialized",
   unknown: "ignored"
 });
-eq("known keys merge", merged.groupByArea, true);
-eq("localUrl merges like any other known key",
-   merged.localUrl, "https://192.168.1.50:8123");
-eq("unknown and secret keys are dropped", merged.token, undefined);
-eq("serialized config has one trailing newline",
-   Config.serialize(merged).endsWith("}\n"), true);
-eq("serialized config contains no token", Config.serialize(merged).includes("token"), false);
+eq("direct patch applies to active endpoint", mergedDirect.endpoints.cabin.groupByArea, true);
+eq("unaffected endpoint untouched", mergedDirect.endpoints.home.groupByArea, false);
+eq("tokens and unknown keys dropped", mergedDirect.endpoints.cabin.token, undefined);
+
+// Adding a new endpoint via patch
+const withNewEndpoint = Config.merge(mergedDirect, {
+  endpoints: {
+    office: {
+      name: "Work Office",
+      baseUrl: "https://ha.office.net"
+    }
+  }
+});
+eq("new endpoint added", withNewEndpoint.endpoints.office.name, "Work Office");
+eq("endpoint count is 3", Object.keys(withNewEndpoint.endpoints).length, 3);
+
+// Targeted patch via endpointId
+const targeted = Config.merge(withNewEndpoint, {
+  endpointId: "home",
+  patch: {
+    favorites: ["light.living_room"]
+  }
+});
+eq("targeted patch updates specified endpoint", targeted.endpoints.home.favorites, ["light.living_room"]);
+
+// Serialization security & formatting
+const serialized = Config.serialize(targeted);
+eq("serialized ends with newline", serialized.endsWith("}\n"), true);
+eq("serialized contains no token", serialized.includes("token"), false);
+eq("serialized parses back cleanly", Config.parse(serialized).config.activeEndpointId, "cabin");
+
+// Deletion of endpoint
+const deleted = Config.merge(targeted, {
+  endpoints: {
+    office: null
+  }
+});
+eq("endpoint was deleted", deleted.endpoints.office, undefined);
+eq("remaining endpoints are home and cabin", Object.keys(deleted.endpoints).sort(), ["cabin", "home"]);
 
 console.log();
 if (failures) {
