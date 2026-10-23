@@ -331,6 +331,101 @@ Item {
 
             Text {
               textFormat: Text.PlainText
+              text: "House / Endpoint"
+              color: Color.muted
+              font.family: root.family
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Row {
+              width: connectionColumn.width
+              spacing: Style.space(8)
+
+              Dropdown {
+                id: endpointDropdown
+                width: connectionColumn.width - Style.space(170)
+                fontFamily: root.family
+                foreground: root.foreground
+                options: {
+                  if (!root.service || !root.service.endpointList) return []
+                  var list = root.service.endpointList
+                  var opts = []
+                  for (var i = 0; i < list.length; i++) {
+                    opts.push({ value: list[i].id, label: list[i].name })
+                  }
+                  return opts
+                }
+                value: root.service ? root.service.activeEndpointId : ""
+                onChanged: function(val) {
+                  if (root.service && val !== root.service.activeEndpointId) {
+                    root.service.switchEndpoint(val)
+                    root.resetDrafts()
+                  }
+                }
+              }
+
+              Button {
+                bordered: true
+                text: "+ New"
+                foreground: root.foreground
+                fontFamily: root.family
+                onClicked: {
+                  if (root.service) {
+                    var count = Object.keys(root.service.endpoints).length + 1
+                    root.service.addEndpoint("house_" + Date.now().toString(36), "House " + count, "home")
+                    root.resetDrafts()
+                  }
+                }
+              }
+
+              Button {
+                bordered: true
+                text: "Delete"
+                visible: root.service && Object.keys(root.service.endpoints).length > 1
+                foreground: root.foreground
+                fontFamily: root.family
+                onClicked: {
+                  if (root.service) {
+                    root.service.deleteEndpoint(root.service.activeEndpointId)
+                    root.resetDrafts()
+                  }
+                }
+              }
+            }
+
+            Row {
+              width: connectionColumn.width
+              spacing: Style.space(8)
+
+              Text {
+                textFormat: Text.PlainText
+                text: "House Name:"
+                color: Color.muted
+                font.family: root.family
+                font.pixelSize: Style.font.caption
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              TextField {
+                width: Style.space(200)
+                text: root.service ? root.service.activeEndpointName : ""
+                onEditingFinished: {
+                  if (root.service && text.trim() && text.trim() !== root.service.activeEndpointName) {
+                    root.service.renameEndpoint(root.service.activeEndpointId, text.trim())
+                  }
+                }
+              }
+            }
+          }
+
+          PanelSeparator { width: connectionColumn.width }
+
+          Column {
+            width: connectionColumn.width
+            spacing: Style.spacing.sm
+
+            Text {
+              textFormat: Text.PlainText
               text: "Home Assistant URL"
               color: Color.muted
               font.family: root.family

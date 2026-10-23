@@ -18,9 +18,20 @@
   },
   "barWidget": {
     "displayName": "Home Assistant",
-    "description": "Favorites-first control of Home Assistant entities.",
+    "description": "Favorites-first control of Home Assistant entities across one or more houses.",
     "category": "Home",
-    "allowMultiple": false,
-    "defaultSection": "right"
+    "allowMultiple": true,
+    "defaultSection": "right",
+    "defaults": {
+      "endpoint": ""
+    },
+    "schema": [
+      {
+        "key": "endpoint",
+        "type": "string",
+        "label": "Endpoint / House ID",
+        "description": "ID of the Home Assistant house/endpoint to display. Leave empty to use the active house."
+      }
+    ]
   }
 }
