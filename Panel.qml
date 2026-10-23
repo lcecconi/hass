@@ -384,7 +384,7 @@ Panel {
 
               PanelActionButton {
                 visible: root.serviceReady && root.hass.endpointList && root.hass.endpointList.length > 1 && !root.configuredEndpointId
-                iconText: "󱡂"
+                iconText: "󱞔"                  // md-home_switch
                 tooltipText: "Switch house (" + (root.hass ? root.hass.activeEndpointName : "") + ")"
                 foreground: Qt.darker(root.fg, 1.4)
                 fontFamily: root.family
